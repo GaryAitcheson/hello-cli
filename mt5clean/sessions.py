@@ -29,11 +29,19 @@ class SessionMask:
     inferred: bool
     """False when the file was too short and a Mon-Fri fallback was used."""
 
+    step: int = 1
+    """Bar step in minutes. Only minutes on this grid can ever be in-session."""
+
     def __contains__(self, ts: int) -> bool:
         return self.in_session[minute_of_week(ts)]
 
     @property
     def session_minutes_per_week(self) -> int:
+        return sum(self.in_session)
+
+    @property
+    def session_bars_per_week(self) -> int:
+        """Expected bars per week — the unit that means something above M1."""
         return sum(self.in_session)
 
     def windows(self) -> List[Tuple[int, int]]:
@@ -79,11 +87,18 @@ class SessionMask:
 
 
 class PresenceHistogram:
-    """Accumulates which minutes of the week ever carry a bar."""
+    """Accumulates which minutes of the week ever carry a bar.
 
-    def __init__(self) -> None:
+    ``step`` is the bar timeframe in minutes. It matters only for the
+    short-history fallback: the inferred mask needs no help, because minutes
+    off the grid simply never accumulate a count and fall below the threshold
+    on their own.
+    """
+
+    def __init__(self, step: int = 1) -> None:
         self.counts = [0] * MINUTES_PER_WEEK
         self.weeks = set()
+        self.step = max(1, step)
 
     def add(self, ts: int) -> None:
         self.counts[minute_of_week(ts)] += 1
@@ -94,12 +109,17 @@ class PresenceHistogram:
         if weeks < MIN_WEEKS_FOR_INFERENCE:
             # Too little history to infer anything trustworthy: assume the FX
             # default of Monday-to-Friday and say so loudly in the report.
-            mask = [(mow // 1440) < 5 for mow in range(MINUTES_PER_WEEK)]
-            return SessionMask(mask, weeks, threshold, inferred=False)
+            # The grid still applies — claiming an H1 file should have a bar
+            # every minute would invent 59 missing bars an hour.
+            mask = [
+                (mow // 1440) < 5 and mow % self.step == 0
+                for mow in range(MINUTES_PER_WEEK)
+            ]
+            return SessionMask(mask, weeks, threshold, inferred=False, step=self.step)
 
         needed = threshold * weeks
         mask = [count >= needed for count in self.counts]
-        return SessionMask(mask, weeks, threshold, inferred=True)
+        return SessionMask(mask, weeks, threshold, inferred=True, step=self.step)
 
 
 def classify_gap(start_ts: int, end_ts: int, session_missing: int) -> str:

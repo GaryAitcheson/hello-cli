@@ -25,6 +25,7 @@ from .model import (
 )
 from .reader import Dialect, detect_digits, read_bars, sniff
 from .sessions import PresenceHistogram, SessionMask, classify_gap
+from .timeframe import detect_step, name_for, on_grid
 
 
 @dataclass
@@ -52,6 +53,19 @@ class AuditResult:
     bars: int = 0
     first_ts: Optional[int] = None
     last_ts: Optional[int] = None
+
+    step: int = 1
+    """Bar timeframe in minutes."""
+
+    step_given: bool = False
+    """True when the timeframe came from the caller rather than the data."""
+
+    step_standard: bool = True
+    """False when the detected step is not one of MT5's chart periods."""
+
+    @property
+    def timeframe(self) -> str:
+        return name_for(self.step)
 
     issues: List[Issue] = field(default_factory=list)
     counts: Counter = field(default_factory=Counter)
@@ -116,6 +130,8 @@ _SEVERITY = {
     "price_jump": Severity.WARN,
     "frozen_feed": Severity.WARN,
     "short_history": Severity.INFO,
+    "irregular_timeframe": Severity.WARN,
+    "timeframe_mismatch": Severity.WARN,
 }
 
 
@@ -133,7 +149,13 @@ def audit(
     path: str,
     thresholds: Optional[Thresholds] = None,
     dialect: Optional[Dialect] = None,
+    step: Optional[int] = None,
 ) -> AuditResult:
+    """Audit `path`.
+
+    `step` forces the bar timeframe in minutes; when omitted it is inferred
+    from the spacing of the bars themselves.
+    """
     thresholds = thresholds or Thresholds()
     dialect = dialect or sniff(path)
     result = AuditResult(
@@ -141,12 +163,14 @@ def audit(
         dialect=dialect,
         digits=detect_digits(path, dialect),
         thresholds=thresholds,
+        step_given=step is not None,
     )
 
     timestamps = array("i")
     closes = array("d")
     ranges = array("d")
     lines = array("i")
+    secs = array("b")
     histogram = PresenceHistogram()
 
     prev: Optional[Bar] = None
@@ -182,6 +206,7 @@ def audit(
         closes.append(bar.close)
         ranges.append(bar.high - bar.low)
         lines.append(bar.line_no)
+        secs.append(min(127, bar.sec))
         histogram.add(bar.ts)
         month_present[_month_key(bar.ts)] += 1
 
@@ -205,6 +230,34 @@ def audit(
     result.spread_min = spread_min if spread_min != float("inf") else 0.0
     result.spread_max = spread_max if spread_max != float("-inf") else 0.0
 
+    ordered = sorted(timestamps) if out_of_order else timestamps
+
+    # The timeframe has to be settled before the session mask is built: the
+    # short-history fallback needs to know which minutes can hold a bar.
+    detected, detected_standard = detect_step(ordered)
+    if step is not None:
+        result.step, result.step_standard = step, True
+        if detected != step:
+            result.add(
+                "timeframe_mismatch",
+                None,
+                None,
+                f"--timeframe says {name_for(step)} but the bars are actually spaced "
+                f"{name_for(detected)} apart; the file is probably not the timeframe "
+                "you think it is",
+            )
+    else:
+        result.step, result.step_standard = detected, detected_standard
+    histogram.step = result.step
+    if not result.step_standard:
+        result.add(
+            "irregular_timeframe",
+            None,
+            None,
+            f"bars are spaced {result.step} minute(s) apart, which is not an MT5 "
+            "chart period; pass --timeframe if this file is not what it looks like",
+        )
+
     result.mask = histogram.build(thresholds.session)
     if not result.mask.inferred:
         result.add(
@@ -215,10 +268,11 @@ def audit(
             "to Mon-Fri and gap classification is approximate",
         )
 
+    _find_off_grid(result, timestamps, secs, lines)
+
     result.median_range = _median(_sample(ranges, 200_000))
     _find_spikes(result, timestamps, closes, ranges, lines)
 
-    ordered = sorted(timestamps) if out_of_order else timestamps
     result.gaps, result.bars_unique = _find_gaps(result, ordered)
     _coverage_by_month(result, month_present)
 
@@ -261,11 +315,7 @@ def _scan_bar(result: AuditResult, bar: Bar, prev: Optional[Bar]) -> None:
     elif o == h == l == c:
         result.add("flat_bar", bar.line_no, bar.ts, ts_to_string(bar.ts, bar.sec))
 
-    if bar.sec:
-        result.add(
-            "off_grid", bar.line_no, bar.ts,
-            f"{ts_to_string(bar.ts, bar.sec)} is not on a whole minute",
-        )
+    # Off-grid is checked after the pass, once the timeframe is known.
 
     if bar.tick_volume < 0:
         result.add(
@@ -299,6 +349,34 @@ def _scan_bar(result: AuditResult, bar: Bar, prev: Optional[Bar]) -> None:
         result.add(code, bar.line_no, bar.ts, ts_to_string(bar.ts, bar.sec))
 
 
+def _find_off_grid(
+    result: AuditResult,
+    timestamps: array,
+    secs: array,
+    lines: array,
+) -> None:
+    """Flag stamps that do not sit on the timeframe grid.
+
+    On an M1 file this means a stray seconds component. Above M1 it also means
+    a bar at a minute the timeframe cannot produce — an M5 bar stamped 09:03
+    is as wrong as an M1 bar stamped 09:03:17, and both usually mean the file
+    has been through something that rewrote its timestamps.
+    """
+    step = result.step
+    for i in range(len(timestamps)):
+        ts, sec = timestamps[i], secs[i]
+        if sec:
+            result.add(
+                "off_grid", lines[i], ts,
+                f"{ts_to_string(ts, sec)} is not on a whole minute",
+            )
+        elif not on_grid(ts, step):
+            result.add(
+                "off_grid", lines[i], ts,
+                f"{ts_to_string(ts)} is not on the {name_for(step)} grid",
+            )
+
+
 def _find_spikes(
     result: AuditResult,
     timestamps: array,
@@ -319,13 +397,15 @@ def _find_spikes(
                 f"{ts_to_string(timestamps[i])} range={ranges[i]:.6g} "
                 f"({ranges[i] / scale:,.0f}x median)",
             )
-        if i and timestamps[i] - timestamps[i - 1] == 1:
+        # Only compare bars that are actually adjacent on the grid, or the
+        # jump across a weekend would be read as a bad print.
+        if i and timestamps[i] - timestamps[i - 1] == result.step:
             move = abs(closes[i] - closes[i - 1])
             if move > jump_limit:
                 result.add(
                     "price_jump", lines[i], timestamps[i],
                     f"{ts_to_string(timestamps[i])} close moved {move:.6g} "
-                    f"({move / scale:,.0f}x median range) in one minute",
+                    f"({move / scale:,.0f}x median range) in one bar",
                 )
 
 

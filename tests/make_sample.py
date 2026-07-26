@@ -35,7 +35,10 @@ def in_session(dt: datetime) -> bool:
     return True
 
 
-def generate(start: datetime, weeks: int, seed: int = 7) -> List[Tuple[datetime, float, float, float, float, int, int]]:
+def generate(
+    start: datetime, weeks: int, seed: int = 7, step: int = 1
+) -> List[Tuple[datetime, float, float, float, float, int, int]]:
+    """Generate a clean series. `step` is the bar timeframe in minutes."""
     rng = random.Random(seed)
     price = 1.10000
     rows = []
@@ -54,7 +57,7 @@ def generate(start: datetime, weeks: int, seed: int = 7) -> List[Tuple[datetime,
             spread = rng.choice([6, 7, 8, 9, 12])
             rows.append((cursor, o, h, l, c, volume, spread))
             price = c
-        cursor += timedelta(minutes=1)
+        cursor += timedelta(minutes=step)
     return rows
 
 

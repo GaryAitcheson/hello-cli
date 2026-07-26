@@ -30,6 +30,8 @@ _CODE_HELP = {
     "price_spike": "bar range far above the median",
     "price_jump": "close-to-close move far above the median range",
     "frozen_feed": "long run of identical bars",
+    "irregular_timeframe": "bar spacing is not an MT5 chart period",
+    "timeframe_mismatch": "given timeframe disagrees with the data",
     "short_history": "not enough history to infer the session reliably",
 }
 
@@ -47,7 +49,9 @@ def render_text(result: AuditResult, examples: int = 5, monthly: bool = True) ->
     w(f"file size        {size / 1_048_576:,.1f} MiB\n")
     w(f"format           {result.dialect.describe()}\n")
     w(f"price decimals   {result.digits}\n")
-    w(f"bars             {result.bars:,} rows, {result.bars_unique:,} unique minutes\n")
+    w(f"bars             {result.bars:,} rows, {result.bars_unique:,} unique stamps\n")
+    source = "given" if result.step_given else "detected"
+    w(f"timeframe        {result.timeframe} ({source})\n")
     if result.first_ts is not None:
         span_days = (result.last_ts - result.first_ts) / 1440.0
         w(f"range            {_fmt_ts(result.first_ts)}  ->  {_fmt_ts(result.last_ts)}"
@@ -65,15 +69,16 @@ def render_text(result: AuditResult, examples: int = 5, monthly: bool = True) ->
         else:
             w("NOT inferred - too little history; assuming Mon-Fri. "
               "Gap classification below is approximate.\n")
-        w(f"{result.mask.session_minutes_per_week:,} tradable minutes per week\n")
+        w(f"{result.mask.session_bars_per_week:,} tradable {result.timeframe} "
+          f"bars per week\n")
         for line in result.mask.describe_windows():
             w(f"  {line}\n")
         w("\nA gap is only counted against you when it lands inside these windows.\n")
 
     w(f"\n{_RULE}\nCoverage\n{_RULE}\n")
-    w(f"session minutes expected  {result.expected_session_minutes:>12,}\n")
-    w(f"session minutes present   {result.bars_unique:>12,}\n")
-    w(f"session minutes missing   {result.session_missing:>12,}\n")
+    w(f"{result.timeframe} bars expected     {result.expected_session_minutes:>12,}\n")
+    w(f"{result.timeframe} bars present      {result.bars_unique:>12,}\n")
+    w(f"{result.timeframe} bars missing      {result.session_missing:>12,}\n")
     w(f"coverage                  {result.coverage:>11.3f}%\n")
 
     w(f"\n{_RULE}\nFindings\n{_RULE}\n")
@@ -164,6 +169,9 @@ def render_json(result: AuditResult) -> str:
             "encoding": result.dialect.encoding,
         },
         "digits": result.digits,
+        "timeframe": result.timeframe,
+        "timeframe_minutes": result.step,
+        "timeframe_detected": not result.step_given,
         "bars": result.bars,
         "unique_minutes": result.bars_unique,
         "first": _fmt_ts(result.first_ts),

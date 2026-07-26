@@ -19,6 +19,7 @@ from .audit import Thresholds, audit
 from .fixes import CleanOptions, CleanStats, clean, describe_plan
 from .model import EPOCH_ORD
 from .reader import SniffError, sniff
+from .timeframe import parse_timeframe
 from .report import render_json, render_text, write_gaps_csv
 from .writers import FORMATS, BarWriter, import_hint, open_output
 
@@ -88,6 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--examples", type=int, default=5, metavar="N",
         help="example rows to print per finding (default: 5)",
     )
+    checks.add_argument(
+        "--timeframe", "-t", metavar="TF",
+        help="bar timeframe (M1, M5, H1, D1, ...); inferred from the data when omitted",
+    )
 
     p_gui = sub.add_parser("gui", help="open the window (also what a bare `mt5clean` does)")
     p_gui.add_argument("file", nargs="?", help="optionally preload this export")
@@ -153,6 +158,17 @@ def _resolve_delimiter(raw: Optional[str]) -> Optional[str]:
     return named.get(raw.lower(), raw)
 
 
+def _step(args) -> Optional[int]:
+    """The timeframe override in minutes, or None to infer it from the data."""
+    raw = getattr(args, "timeframe", None)
+    if not raw:
+        return None
+    try:
+        return parse_timeframe(raw)
+    except ValueError as exc:
+        raise SystemExit(f"mt5clean: {exc}")
+
+
 def _thresholds(args) -> Thresholds:
     return Thresholds(
         session=args.session_threshold,
@@ -187,7 +203,7 @@ def cmd_info(args) -> int:
 
 def cmd_audit(args) -> int:
     dialect = sniff(args.file, _resolve_delimiter(args.delimiter), args.date_order)
-    result = audit(args.file, _thresholds(args), dialect)
+    result = audit(args.file, _thresholds(args), dialect, step=_step(args))
 
     if args.json:
         print(render_json(result))
@@ -220,7 +236,7 @@ def cmd_clean(args) -> int:
         return EXIT_ERROR
 
     dialect = sniff(args.file, _resolve_delimiter(args.delimiter), args.date_order)
-    result = audit(args.file, _thresholds(args), dialect)
+    result = audit(args.file, _thresholds(args), dialect, step=_step(args))
     report_text = render_text(result, examples=args.examples)
     print(report_text)
 
@@ -272,7 +288,7 @@ def cmd_clean(args) -> int:
 
     if args.verify:
         print(f"\n{'=' * 72}\nRe-audit of the cleaned file\n{'=' * 72}")
-        verified = audit(args.output, _thresholds(args))
+        verified = audit(args.output, _thresholds(args), step=_step(args))
         print(render_text(verified, examples=3, monthly=False))
 
     return EXIT_OK

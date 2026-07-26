@@ -20,6 +20,7 @@ from pathlib import Path
 # Dependency order: each module may only use names defined above it.
 MODULES = [
     "model",
+    "timeframe",
     "reader",
     "sessions",
     "audit",

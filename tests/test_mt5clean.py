@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import io
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -504,3 +504,120 @@ def test_cli_tz_shift_parsing(tmp_path, dirty_file):
     original = audit(dirty_file)
     shifted = audit(str(out))
     assert shifted.first_ts == original.first_ts - 180
+
+
+# --------------------------------------------------------------------------
+# timeframes above M1
+# --------------------------------------------------------------------------
+
+def _write_tf(tmp_path, name, weeks, step):
+    path = tmp_path / name
+    write(generate(datetime(2024, 1, 1), weeks=weeks, step=step), str(path), "mt5")
+    return str(path)
+
+
+@pytest.mark.parametrize("step,label", [(5, "M5"), (15, "M15"), (60, "H1"), (240, "H4")])
+def test_detects_timeframe(tmp_path, step, label):
+    path = _write_tf(tmp_path, f"tf{step}.csv", 8, step)
+    result = audit(path)
+    assert result.step == step
+    assert result.timeframe == label
+    assert not result.step_given
+
+
+@pytest.mark.parametrize("step", [5, 15, 60, 240])
+def test_higher_timeframes_report_no_false_gaps(tmp_path, step):
+    """The bane of naive gap checks: every non-M1 bar looking like a hole."""
+    path = _write_tf(tmp_path, f"clean{step}.csv", 8, step)
+    result = audit(path)
+    assert result.session_missing == 0
+    assert result.coverage == pytest.approx(100.0)
+    assert result.counts.get("gap_intraday", 0) == 0
+    assert result.counts.get("off_grid", 0) == 0
+
+
+def test_gap_in_h1_file_is_found_and_counted_in_bars(tmp_path):
+    rows = generate(datetime(2024, 1, 1), weeks=8, step=60)
+    missing = rows[500:504]
+    del rows[500:504]
+    path = tmp_path / "h1_gap.csv"
+    write(rows, str(path), "mt5")
+    result = audit(str(path))
+    assert result.step == 60
+    # Four missing H1 bars, not 240 missing minutes.
+    assert result.session_missing == 4
+    assert len(missing) == 4
+
+
+def test_short_higher_timeframe_file_does_not_invent_bars(tmp_path):
+    """The fallback session mask must respect the grid.
+
+    A one-week H1 file falls back to Mon-Fri. If the fallback ignored the
+    timeframe it would expect a bar every minute and report ~7,000 missing.
+    """
+    path = _write_tf(tmp_path, "h1_short.csv", 1, 60)
+    result = audit(path)
+    assert not result.mask.inferred
+    assert result.mask.step == 60
+    # The fallback over-counts slightly (it cannot know the daily break), but
+    # the number that matters is the order of magnitude: ignoring the grid
+    # would expect a bar every minute and report thousands missing.
+    assert result.session_missing < 24
+    assert result.coverage > 90.0
+
+
+def test_off_grid_stamp_on_m5_file(tmp_path):
+    rows = generate(datetime(2024, 1, 1), weeks=8, step=5)
+    bad = rows[300]
+    rows[300] = (bad[0] + timedelta(minutes=2),) + bad[1:]
+    path = tmp_path / "m5_offgrid.csv"
+    write(rows, str(path), "mt5")
+    result = audit(str(path))
+    assert result.step == 5
+    assert result.counts["off_grid"] == 1
+
+
+def test_explicit_timeframe_override(tmp_path):
+    path = _write_tf(tmp_path, "h1.csv", 8, 60)
+    result = audit(path, step=60)
+    assert result.step_given
+    assert result.timeframe == "H1"
+    assert "timeframe_mismatch" not in result.counts
+
+
+def test_wrong_explicit_timeframe_is_flagged(tmp_path):
+    path = _write_tf(tmp_path, "h1b.csv", 8, 60)
+    result = audit(path, step=30)
+    assert result.counts["timeframe_mismatch"] == 1
+
+
+def test_m1_behaviour_is_unchanged(clean_file):
+    result = audit(clean_file)
+    assert result.step == 1
+    assert result.timeframe == "M1"
+    assert result.coverage == pytest.approx(100.0)
+
+
+def test_timeframe_appears_in_reports(tmp_path):
+    import json as _json
+
+    path = _write_tf(tmp_path, "h1c.csv", 8, 60)
+    result = audit(path)
+    assert "H1" in render_text(result, examples=0)
+    payload = _json.loads(render_json(result))
+    assert payload["timeframe"] == "H1"
+    assert payload["timeframe_minutes"] == 60
+
+
+def test_filling_an_h1_gap_inserts_h1_bars(tmp_path):
+    rows = generate(datetime(2024, 1, 1), weeks=8, step=60)
+    del rows[500:503]
+    src = tmp_path / "h1_fill_in.csv"
+    write(rows, str(src), "mt5")
+    out = tmp_path / "h1_fill_out.csv"
+    code = main(["clean", str(src), "-o", str(out), "--fill-gaps", "--examples", "0"])
+    assert code == 0
+    after = audit(str(out))
+    assert after.step == 60
+    assert after.session_missing == 0
+    assert after.bars_unique == len(rows) + 3
