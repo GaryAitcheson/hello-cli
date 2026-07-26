@@ -16,8 +16,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mt5clean import audit, clean, read_bars, render_json, render_text, sniff  # noqa: E402
-from mt5clean.cli import main  # noqa: E402
+import random
+
+from mt5clean import (  # noqa: E402
+    audit,
+    audit_ticks,
+    clean,
+    read_bars,
+    read_ticks,
+    render_json,
+    render_text,
+    render_tick_json,
+    render_tick_text,
+    sniff,
+)
+from mt5clean.cli import EXIT_ERROR, main  # noqa: E402
 from mt5clean.fixes import CleanOptions, CleanStats  # noqa: E402
 from mt5clean.model import Bar, minute_of_week  # noqa: E402
 from mt5clean.reader import SniffError  # noqa: E402
@@ -621,3 +634,180 @@ def test_filling_an_h1_gap_inserts_h1_bars(tmp_path):
     assert after.step == 60
     assert after.session_missing == 0
     assert after.bars_unique == len(rows) + 3
+
+
+# --------------------------------------------------------------------------
+# tick exports
+# --------------------------------------------------------------------------
+
+def _tick_line(dt, bid, ask, last=0.0, volume=0, flags=6):
+    stamp = dt.strftime("%Y.%m.%d\t%H:%M:%S.%f")[:-3]
+    return f"{stamp}\t{bid:.5f}\t{ask:.5f}\t{last}\t{volume}\t{flags}"
+
+
+def _write_ticks(tmp_path, name, rows):
+    path = tmp_path / name
+    lines = ["<DATE>\t<TIME>\t<BID>\t<ASK>\t<LAST>\t<VOLUME>\t<FLAGS>"]
+    lines += [_tick_line(*row) for row in rows]
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def _clean_ticks(start, count, step_ms=500, seed=1):
+    rng = random.Random(seed)
+    rows = []
+    t = start
+    bid = 1.09000
+    for _ in range(count):
+        bid = round(bid + rng.gauss(0, 0.00001), 5)
+        ask = round(bid + 0.00009, 5)
+        rows.append((t, bid, ask))
+        t += timedelta(milliseconds=step_ms)
+    return rows
+
+
+def test_sniff_detects_tick_export(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    path = _write_ticks(tmp_path, "ticks.csv", rows)
+    d = sniff(path)
+    assert d.kind == "ticks"
+    assert set(d.columns) >= {"date", "time", "bid", "ask"}
+
+
+def test_clean_ticks_have_no_findings(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 2000)
+    path = _write_ticks(tmp_path, "ticks_clean.csv", rows)
+    result = audit_ticks(path)
+    assert result.ticks == 2000
+    assert result.error_count == 0
+    assert result.counts.get("crossed_quote", 0) == 0
+
+
+def test_crossed_quote_detected(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    t, bid, ask = rows[100]
+    rows[100] = (t, bid, bid - 0.001)  # ask below bid
+    path = _write_ticks(tmp_path, "ticks_crossed.csv", rows)
+    result = audit_ticks(path)
+    assert result.counts["crossed_quote"] == 1
+
+
+def test_non_positive_quote_detected(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    t, _bid, _ask = rows[50]
+    rows[50] = (t, 0.0, 0.0)
+    path = _write_ticks(tmp_path, "ticks_zero.csv", rows)
+    result = audit_ticks(path)
+    assert result.counts["non_positive_quote"] == 1
+
+
+def test_duplicate_tick_timestamp(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    rows.insert(200, rows[200])  # exact duplicate, same millisecond
+    path = _write_ticks(tmp_path, "ticks_dup.csv", rows)
+    result = audit_ticks(path)
+    assert result.counts["duplicate_identical"] == 1
+
+
+def test_conflicting_duplicate_tick(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    t, bid, ask = rows[200]
+    rows.insert(200, (t, bid + 0.0005, ask + 0.0005))
+    path = _write_ticks(tmp_path, "ticks_dup_conflict.csv", rows)
+    result = audit_ticks(path)
+    assert result.counts["duplicate_conflicting"] == 1
+
+
+def test_wide_spread_detected(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 2000)
+    t, bid, _ask = rows[1000]
+    rows[1000] = (t, bid, bid + 0.05)
+    path = _write_ticks(tmp_path, "ticks_wide.csv", rows)
+    result = audit_ticks(path)
+    assert result.counts["wide_spread"] == 1
+
+
+def test_silence_detected_inside_session(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 3000, step_ms=200)
+    # Splice a multi-minute silence into the middle of a Monday.
+    t, bid, ask = rows[1500]
+    shifted = [(t + timedelta(minutes=10), b, a) for _, b, a in rows[1500:]]
+    rows = rows[:1500] + shifted
+    path = _write_ticks(tmp_path, "ticks_silence.csv", rows)
+    result = audit_ticks(path)
+    assert result.counts.get("silence", 0) >= 1
+
+
+def test_ticks_do_not_report_weekend_as_silence(tmp_path):
+    # Enough weeks for a real session mask (not the short-history Mon-Fri
+    # fallback, which is a documented approximation - see
+    # test_short_history_falls_back_to_mon_fri). The session model works at
+    # minute-of-week resolution, so it needs a tick landing in most minutes
+    # of the trading day to work at all - real MT5 tick exports are this
+    # dense (often several ticks a second); a half-hour Mon-Fri session with
+    # a tick every 2s across 3 weeks is enough to populate every minute.
+    rows = []
+    day = datetime(2024, 1, 1)  # a Monday
+    for week in range(3):
+        for wd in range(5):
+            start = day + timedelta(weeks=week, days=wd)
+            rows += _clean_ticks(start, 900, step_ms=2_000, seed=week * 5 + wd)
+    path = _write_ticks(tmp_path, "ticks_weekend.csv", rows)
+    result = audit_ticks(path)
+    assert result.mask.inferred
+    assert result.counts.get("silence", 0) == 0
+
+
+def test_out_of_order_ticks_detected(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    rows[10], rows[11] = rows[11], rows[10]
+    path = _write_ticks(tmp_path, "ticks_unordered.csv", rows)
+    result = audit_ticks(path)
+    assert result.counts["out_of_order"] == 1
+
+
+def test_millisecond_precision_preserved(tmp_path):
+    rows = [
+        (datetime(2024, 1, 1, 0, 0, 0, 123000), 1.1, 1.10009),
+        (datetime(2024, 1, 1, 0, 0, 0, 456000), 1.1, 1.10009),
+    ]
+    path = _write_ticks(tmp_path, "ticks_ms.csv", rows)
+    ticks = list(read_ticks(path, sniff(path)))
+    assert ticks[0].ms == 123
+    assert ticks[1].ms == 456
+
+
+def test_tick_reports_render(tmp_path):
+    import json as _json
+
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    path = _write_ticks(tmp_path, "ticks_report.csv", rows)
+    result = audit_ticks(path)
+    text = render_tick_text(result)
+    assert "MT5 tick audit" in text
+    payload = _json.loads(render_tick_json(result))
+    assert payload["kind"] == "ticks"
+    assert payload["ticks"] == 500
+
+
+def test_cli_audit_dispatches_to_ticks(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    path = _write_ticks(tmp_path, "ticks_cli.csv", rows)
+    code = main(["audit", path, "--examples", "0", "--fail-on", "error"])
+    assert code == 0
+
+
+def test_cli_info_reports_tick_kind(tmp_path, capsys):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    path = _write_ticks(tmp_path, "ticks_info.csv", rows)
+    main(["info", path])
+    out = capsys.readouterr().out
+    assert "kind       ticks" in out
+
+
+def test_cli_clean_refuses_tick_files(tmp_path):
+    rows = _clean_ticks(datetime(2024, 1, 1), 500)
+    path = _write_ticks(tmp_path, "ticks_clean_refuse.csv", rows)
+    code = main(["clean", path, "-o", str(tmp_path / "out.csv")])
+    assert code == EXIT_ERROR
+    assert not (tmp_path / "out.csv").exists()

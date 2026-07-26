@@ -3,7 +3,8 @@
 [![tests](https://github.com/GaryAitcheson/hello-cli/actions/workflows/tests.yml/badge.svg)](https://github.com/GaryAitcheson/hello-cli/actions/workflows/tests.yml)
 
 A simple command-line greeter written in Python, plus **mt5clean** — a data
-cleaner for MetaTrader 5 M1 bar exports.
+cleaner for MetaTrader 5 exports: bars at any timeframe (M1 through W1) and
+ticks.
 
 ## Installation
 
@@ -38,6 +39,8 @@ mt5clean                               # open the window and pick a file
 mt5clean info   EURUSD_M1.csv          # what format is this file?
 mt5clean audit  EURUSD_M1.csv          # what is wrong with it?  (writes nothing)
 mt5clean clean  EURUSD_M1.csv -o EURUSD_sqx.csv --dedupe last --fix-ohlc
+mt5clean audit  EURUSD_H1.csv          # any MT5 chart period, not just M1
+mt5clean audit  EURUSD_ticks.csv       # tick exports too (audit only, see below)
 ```
 
 ## The window
@@ -78,7 +81,7 @@ altering price history is how you end up trusting a backtest you shouldn't.
 | `out_of_order` | timestamp goes backwards |
 | `duplicate_conflicting` | same timestamp, *different* prices — a real problem |
 | `duplicate_identical` | same timestamp, same prices — usually a double export |
-| `off_grid` | an M1 stamp that isn't on a whole minute |
+| `off_grid` | a stamp that isn't on the timeframe's grid (any minute for M1, the hour for H1, etc.) |
 
 **Bar integrity**
 
@@ -87,7 +90,7 @@ altering price history is how you end up trusting a backtest you shouldn't.
 | `ohlc_invalid` | high/low don't contain open/close, or high < low |
 | `non_positive_price` | zero or negative prices |
 | `price_spike` | bar range far above the median (default: 30x) |
-| `price_jump` | one-minute close-to-close move far above the median range |
+| `price_jump` | one-bar close-to-close move far above the median range |
 | `flat_bar` | open == high == low == close |
 | `frozen_feed` | a long run of byte-identical bars |
 | `zero_volume` / `negative_volume` | no ticks, or an impossible count |
@@ -126,6 +129,54 @@ Weekends and the nightly rollover break are therefore never counted against
 your coverage — only holes that fall inside hours the instrument actually
 trades. Files spanning under three weeks are too short to infer anything
 reliable; those fall back to Mon–Fri and say so.
+
+## Timeframes
+
+`audit` and `clean` work on any of MT5's standard chart periods — M1 through
+W1 — not just one-minute bars. The timeframe is inferred from the modal
+spacing between bars; pass `--timeframe H1` (or `-t H1`) to state it
+explicitly, which is also how a mislabelled export gets caught: if the data
+doesn't actually match the timeframe you gave, `mt5clean` says so
+(`timeframe_mismatch`) instead of silently trusting you.
+
+```
+mt5clean audit EURUSD_H1.csv
+...
+timeframe        H1 (detected)
+...
+H1 bars expected            920
+H1 bars present              920
+```
+
+Everything scales with the grid: coverage is reported in bars of that
+timeframe rather than minutes, off-grid detection catches a stamp the
+timeframe can't produce (an M5 bar at `09:03`, say), and `--fill-gaps` inserts
+bars on the same grid it found.
+
+## Tick exports
+
+Point `mt5clean audit` at a tick file (`<DATE> <TIME> <BID> <ASK> <LAST>
+<VOLUME> <FLAGS>`, millisecond timestamps) and it is detected automatically —
+no flag needed. Ticks are a different kind of data, so the checks are
+different:
+
+| Finding | Meaning |
+| --- | --- |
+| `crossed_quote` | ask below bid |
+| `non_positive_quote` | no usable positive price on the tick |
+| `wide_spread` | spread far above the instrument's median |
+| `silence` | no ticks for far longer than usual, during trading hours |
+| `out_of_order` / `duplicate_conflicting` / `duplicate_identical` | same meaning as for bars |
+
+There is no fixed grid for ticks to check against, so "gap" detection instead
+means unusually long silences relative to the file's own tempo — a stretch far
+longer than the median inter-tick gap while the (shared) session model says
+the market should be open. The session model needs ticks landing in most
+minutes of the trading day to work at all; real MT5 tick exports are this
+dense, but a thin or synthetic file may fall back to the same short-history
+Mon–Fri approximation bars use.
+
+`clean` does not repair tick files yet — only `audit`.
 
 ## Repair flags
 

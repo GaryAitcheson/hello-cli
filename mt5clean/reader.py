@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Optional, Tuple
 
-from .model import EPOCH_ORD, Bar, Issue, Severity
+from .model import EPOCH_ORD, Bar, Issue, Severity, Tick
 
 DELIMITERS = ("\t", ";", ",", "|", " ")
 
@@ -46,6 +46,12 @@ _HEADER_ALIASES = {
     "real_volume": "real_volume",
     "realvolume": "real_volume",
     "spread": "spread",
+    "bid": "bid",
+    "ask": "ask",
+    "last": "last",
+    "flags": "flags",
+    "flag": "flags",
+    "volume_real": "real_volume",
 }
 
 _NUMERIC_RE = re.compile(r"^[+-]?\d+(?:[.,]\d+)?(?:[eE][+-]?\d+)?$")
@@ -65,6 +71,9 @@ class Dialect:
     delimiter: str
     has_header: bool
     columns: Dict[str, int]
+    kind: str = "bars"
+    """Either "bars" or "ticks"."""
+
     date_order: str = "ymd"
     date_order_ambiguous: bool = False
     """True when the sample never contained a day above 12, so DD/MM could
@@ -119,7 +128,7 @@ def _score_delimiter(lines: List[str], delimiter: str) -> Tuple[int, int]:
     if not counts:
         return (0, 0)
     modal = max(set(counts), key=counts.count)
-    if modal < 5:  # need at least date+OHLC
+    if modal < 4:  # date + time + at least two price columns
         return (0, modal)
     return (counts.count(modal), modal)
 
@@ -224,6 +233,7 @@ def sniff(
     if not data_rows:
         raise SniffError(f"{path}: header found but no data rows")
 
+    kind = "bars"
     if has_header:
         columns: Dict[str, int] = {}
         for idx, cell in enumerate(rows[0]):
@@ -231,10 +241,16 @@ def sniff(
             if canonical and canonical not in columns:
                 columns[canonical] = idx
         missing = {"open", "high", "low", "close"} - set(columns)
-        if missing or not ({"date", "datetime"} & set(columns)):
+        has_stamp = bool({"date", "datetime"} & set(columns))
+        if {"bid", "ask"} & set(columns) and has_stamp:
+            # A tick export: bid/ask instead of OHLC, and no fixed grid.
+            kind = "ticks"
+        elif missing or not has_stamp:
             # Header exists but is unrecognised - fall back to position.
             columns = _map_positional(len(data_rows[0]), data_rows[0])
     else:
+        # Headerless tick exports are not a thing MT5 produces, so position
+        # mapping only ever has to cover bars.
         columns = _map_positional(len(data_rows[0]), data_rows[0])
 
     date_idx = columns.get("date", columns.get("datetime", 0))
@@ -245,7 +261,7 @@ def sniff(
     else:
         detected, ambiguous = _detect_date_order(data_rows, date_idx)
 
-    price_idx = columns["close"]
+    price_idx = columns["bid"] if kind == "ticks" else columns["close"]
     decimal_comma = chosen != "," and any(
         "," in row[price_idx] for row in data_rows[:20] if price_idx < len(row)
     )
@@ -254,6 +270,7 @@ def sniff(
         delimiter=chosen,
         has_header=has_header,
         columns=columns,
+        kind=kind,
         date_order=detected,
         date_order_ambiguous=ambiguous,
         decimal_comma=decimal_comma,
@@ -310,6 +327,21 @@ class _StampParser:
         minute = int(parts[1]) if len(parts) > 1 else 0
         second = int(float(parts[2])) if len(parts) > 2 else 0
         return hour * 60 + minute, second
+
+    @staticmethod
+    def clock_ms(text: str) -> Tuple[int, int]:
+        """Return (minutes into the day, milliseconds into that minute).
+
+        Tick exports carry a fractional-second component MT5 uses to order
+        ticks that land in the same second; bars never need this precision.
+        """
+        if not text:
+            return 0, 0
+        parts = text.split(":")
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        seconds = float(parts[2]) if len(parts) > 2 else 0.0
+        return hour * 60 + minute, int(round(seconds * 1000))
 
 
 def _to_float(text: str, decimal_comma: bool) -> float:
@@ -413,9 +445,98 @@ def read_bars(
         stats["unparseable_row"] = errors
 
 
+def read_ticks(
+    path: str,
+    dialect: Dialect,
+    issues: Optional[List[Issue]] = None,
+    max_parse_errors: int = 50,
+    stats: Optional[Dict[str, int]] = None,
+) -> Iterator[Tick]:
+    """Stream `path` as Tick records. Mirrors `read_bars`.
+
+    Ticks have no fixed grid, sub-second stamps, and bid/ask instead of OHLC,
+    so this is a parallel path rather than a variant of `read_bars` - trying
+    to unify them would leave both harder to follow for no shared benefit.
+    """
+    cols = dialect.columns
+    stamps = _StampParser(dialect.date_order)
+    dc = dialect.decimal_comma
+
+    date_i = cols.get("date")
+    time_i = cols.get("time")
+    dt_i = cols.get("datetime")
+    bid_i = cols.get("bid")
+    ask_i = cols.get("ask")
+    last_i = cols.get("last")
+    vol_i = cols.get("tick_volume", cols.get("real_volume"))
+    flags_i = cols.get("flags")
+    needed = max(v for v in cols.values()) + 1
+
+    errors = 0
+    with io.open(path, "r", encoding=dialect.encoding, newline="") as fh:
+        for line_no, line in enumerate(fh, start=1):
+            line = line.rstrip("\r\n")
+            if not line.strip():
+                continue
+            if line_no == 1 and dialect.has_header:
+                continue
+            row = _split(line, dialect.delimiter)
+            try:
+                if len(row) < needed:
+                    raise ValueError(f"expected {needed} columns, found {len(row)}")
+                if dt_i is not None:
+                    stamp = row[dt_i].strip().replace("T", " ")
+                    date_part, _, time_part = stamp.partition(" ")
+                else:
+                    date_part = row[date_i].strip()
+                    time_part = row[time_i].strip() if time_i is not None else ""
+                    if " " in date_part and not time_part:
+                        date_part, _, time_part = date_part.partition(" ")
+
+                minutes, ms = stamps.clock_ms(time_part)
+                ts = stamps.days(date_part) * 1440 + minutes
+
+                yield Tick(
+                    ts=ts,
+                    ms=ms,
+                    bid=_to_float(row[bid_i], dc) if bid_i is not None and row[bid_i].strip() else 0.0,
+                    ask=_to_float(row[ask_i], dc) if ask_i is not None and row[ask_i].strip() else 0.0,
+                    last=_to_float(row[last_i], dc) if last_i is not None and row[last_i].strip() else 0.0,
+                    volume=_to_float(row[vol_i], dc) if vol_i is not None and row[vol_i].strip() else 0.0,
+                    flags=_to_float(row[flags_i], dc) if flags_i is not None and row[flags_i].strip() else 0.0,
+                    line_no=line_no,
+                )
+            except (ValueError, IndexError, OverflowError) as exc:
+                errors += 1
+                if issues is not None and errors <= max_parse_errors:
+                    issues.append(
+                        Issue(
+                            code="unparseable_row",
+                            severity=Severity.ERROR,
+                            line_no=line_no,
+                            ts=None,
+                            message=f"{exc} | {line[:100]}",
+                        )
+                    )
+                continue
+
+    if issues is not None and errors > max_parse_errors:
+        issues.append(
+            Issue(
+                code="unparseable_row",
+                severity=Severity.ERROR,
+                line_no=None,
+                ts=None,
+                message=f"... and {errors - max_parse_errors} further unparseable rows",
+            )
+        )
+    if stats is not None:
+        stats["unparseable_row"] = errors
+
+
 def detect_digits(path: str, dialect: Dialect, limit: int = 5000) -> int:
     """Infer the symbol's price precision from the raw text (5 for most FX)."""
-    close_i = dialect.columns["close"]
+    price_i = dialect.columns["bid"] if dialect.kind == "ticks" else dialect.columns["close"]
     best = 0
     seen = 0
     with io.open(path, "r", encoding=dialect.encoding, newline="") as fh:
@@ -425,8 +546,8 @@ def detect_digits(path: str, dialect: Dialect, limit: int = 5000) -> int:
             if not line.strip():
                 continue
             row = _split(line.rstrip("\r\n"), dialect.delimiter)
-            if close_i < len(row) and _NUMERIC_RE.match(row[close_i].strip()):
-                best = max(best, count_decimals(row[close_i].strip(), dialect.decimal_comma))
+            if price_i < len(row) and _NUMERIC_RE.match(row[price_i].strip()):
+                best = max(best, count_decimals(row[price_i].strip(), dialect.decimal_comma))
                 seen += 1
             if seen >= limit:
                 break

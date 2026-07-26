@@ -52,7 +52,7 @@ def _parse_shift(text: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mt5clean",
-        description="Audit and repair MetaTrader 5 M1 bar exports before you backtest on them.",
+        description="Audit and repair MetaTrader 5 exports (bars, any timeframe, and ticks) before you backtest on them.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
@@ -188,13 +188,15 @@ def cmd_info(args) -> int:
     dialect = sniff(args.file, _resolve_delimiter(args.delimiter), args.date_order)
     print(f"file       {args.file}")
     print(f"size       {os.path.getsize(args.file) / 1_048_576:,.2f} MiB")
+    print(f"kind       {dialect.kind}")
     print(f"format     {dialect.describe()}")
     if dialect.header_line:
         print(f"header     {dialect.header_line[:120]}")
     print("sample:")
     for row in dialect.sample_rows[: args.head]:
         print("  " + " | ".join(row))
-    missing = {"open", "high", "low", "close"} - set(dialect.columns)
+    required = {"bid"} if dialect.kind == "ticks" else {"open", "high", "low", "close"}
+    missing = required - set(dialect.columns)
     if missing:
         print(f"WARNING: could not locate columns: {', '.join(sorted(missing))}")
         return EXIT_FINDINGS
@@ -203,6 +205,26 @@ def cmd_info(args) -> int:
 
 def cmd_audit(args) -> int:
     dialect = sniff(args.file, _resolve_delimiter(args.delimiter), args.date_order)
+
+    if dialect.kind == "ticks":
+        from .tick_audit import TickThresholds, audit_ticks
+        from .tick_report import render_json as render_tick_json
+        from .tick_report import render_text as render_tick_text
+
+        tick_thresholds = TickThresholds(session=args.session_threshold)
+        result = audit_ticks(args.file, tick_thresholds, dialect)
+        if args.json:
+            print(render_tick_json(result))
+        else:
+            print(render_tick_text(result, examples=args.examples))
+        if args.json_out:
+            with io.open(args.json_out, "w", encoding="utf-8") as fh:
+                fh.write(render_tick_json(result))
+            print(f"JSON report written to {args.json_out}", file=sys.stderr)
+        if args.gaps_csv:
+            print("note: --gaps-csv has no meaning for tick files, ignoring", file=sys.stderr)
+        return _exit_code(result, args.fail_on)
+
     result = audit(args.file, _thresholds(args), dialect, step=_step(args))
 
     if args.json:
@@ -236,6 +258,14 @@ def cmd_clean(args) -> int:
         return EXIT_ERROR
 
     dialect = sniff(args.file, _resolve_delimiter(args.delimiter), args.date_order)
+    if dialect.kind == "ticks":
+        print(
+            "error: `clean` does not yet repair tick exports, only bars. "
+            "Use `mt5clean audit` to check a tick file.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
     result = audit(args.file, _thresholds(args), dialect, step=_step(args))
     report_text = render_text(result, examples=args.examples)
     print(report_text)

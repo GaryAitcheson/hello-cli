@@ -34,6 +34,29 @@ class Bar(NamedTuple):
     line_no: int
 
 
+class Tick(NamedTuple):
+    ts: int
+    """Minutes since epoch, truncated to the minute (same clock as Bar.ts)."""
+
+    ms: int
+    """Milliseconds into the minute. MT5 tick exports carry .000-.999s."""
+
+    bid: float
+    ask: float
+    last: float
+    volume: float
+    flags: float
+    line_no: int
+
+    @property
+    def spread(self) -> float:
+        return self.ask - self.bid if self.bid and self.ask else 0.0
+
+    def micros(self) -> int:
+        """Sortable sub-minute key: milliseconds since the start of the minute."""
+        return self.ms
+
+
 class Severity:
     ERROR = "error"
     WARN = "warn"
@@ -78,6 +101,11 @@ def ts_to_datetime(ts: int) -> datetime:
 def ts_to_string(ts: int, sec: int = 0) -> str:
     dt = ts_to_datetime(ts)
     return f"{dt:%Y.%m.%d %H:%M}:{sec:02d}"
+
+
+def tick_ts_to_string(ts: int, ms: int = 0) -> str:
+    dt = ts_to_datetime(ts)
+    return f"{dt:%Y.%m.%d %H:%M}:{ms // 1000:02d}.{ms % 1000:03d}"
 
 
 def minute_of_week(ts: int) -> int:

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hello-cli"
 version = "0.1.0"
-description = "A simple greeter, plus mt5clean: an auditor and repair tool for MetaTrader 5 M1 bar exports."
+description = "A simple greeter, plus mt5clean: an auditor and repair tool for MetaTrader 5 bar and tick exports."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

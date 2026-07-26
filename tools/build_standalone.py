@@ -24,6 +24,8 @@ MODULES = [
     "reader",
     "sessions",
     "audit",
+    "tick_audit",
+    "tick_report",
     "fixes",
     "writers",
     "report",
@@ -38,7 +40,7 @@ RELATIVE_IMPORT = re.compile(
     re.MULTILINE,
 )
 
-HEADER = '''"""mt5clean {version} - audit and repair MetaTrader 5 M1 bar exports.
+HEADER = '''"""mt5clean {version} - audit and repair MetaTrader 5 bar and tick exports.
 
 Standalone build: the whole tool in one file, stdlib only.
 
