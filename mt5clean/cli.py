@@ -114,8 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
         "clean", parents=[common, checks], help="write a repaired copy"
     )
     p_clean.add_argument("-o", "--output", metavar="PATH", help="destination file")
-    p_clean.add_argument("--format", choices=FORMATS, default="sqx",
-                         help="output layout (default: sqx)")
+    p_clean.add_argument("--format", choices=FORMATS, default="mt5",
+                         help="output layout (default: mt5, i.e. exactly what MT5 exports)")
     p_clean.add_argument("--digits", type=int, metavar="N",
                          help="price decimals to write (default: detected from the input)")
     p_clean.add_argument("--dedupe", choices=("none", "first", "last"), default="none",

@@ -158,7 +158,8 @@ def test_repair_writes_a_file_that_reparses(app, tmp_path, monkeypatch):
     dialog.run()
     assert pump_until(app.root, lambda: target.exists() and "Wrote" in app.text.get("1.0", "end"))
 
-    assert sniff(str(target)).delimiter == ","
+    # GUI default output is now "mt5" (tab separated), matching a real MT5 export.
+    assert sniff(str(target)).delimiter == "\t"
     assert audit(str(target)).error_count == 0
 
 

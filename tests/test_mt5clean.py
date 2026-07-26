@@ -383,11 +383,14 @@ def test_writer_rejects_unknown_format():
 
 
 def test_cleaned_output_reparses(tmp_path, dirty_file):
-    out = tmp_path / "sqx.csv"
+    # No --format given: default output is mt5-shaped, matching what MT5 itself
+    # exports, so the cleaned file re-imports on exactly the same settings.
+    out = tmp_path / "mt5.csv"
     assert main(["clean", dirty_file, "-o", str(out), "--examples", "0"]) == 0
     d = sniff(str(out))
-    assert d.delimiter == ","
-    assert d.columns["spread"] == 7
+    assert d.delimiter == "\t"
+    assert d.has_header
+    assert d.columns["spread"] == 8
     assert list(read_bars(str(out), d))
 
 
@@ -397,6 +400,15 @@ def test_mt5_format_round_trips(tmp_path, dirty_file):
     d = sniff(str(out))
     assert d.delimiter == "\t"
     assert d.has_header
+
+
+def test_sqx_format_still_available(tmp_path, dirty_file):
+    out = tmp_path / "sqx.csv"
+    assert main(["clean", dirty_file, "-o", str(out), "--format", "sqx", "--examples", "0"]) == 0
+    d = sniff(str(out))
+    assert d.delimiter == ","
+    assert d.columns["spread"] == 7
+    assert list(read_bars(str(out), d))
 
 
 # --------------------------------------------------------------------------

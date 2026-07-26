@@ -364,7 +364,7 @@ class CleanDialog:
         self.max_fill = tk.IntVar(value=suggested.max_fill)
         self.drop_spikes = tk.BooleanVar(value=suggested.drop_spikes)
         self.session_only = tk.BooleanVar(value=False)
-        self.out_format = tk.StringVar(value="sqx")
+        self.out_format = tk.StringVar(value="mt5")
 
         row = 1
         row = self._combo(body, row, "Duplicate timestamps", self.duplicates,
@@ -397,7 +397,8 @@ class CleanDialog:
         ttk.Label(body, text="Output format").grid(row=row, column=0, sticky="w")
         ttk.Combobox(body, textvariable=self.out_format, values=list(FORMATS),
                      state="readonly", width=10).grid(row=row, column=1, sticky="w", padx=8)
-        ttk.Label(body, text="sqx = StrategyQuant X import", foreground="#666").grid(
+        ttk.Label(body, text="mt5 = identical to an MT5 export (import it the same way)",
+                  foreground="#666").grid(
             row=row, column=2, sticky="w"
         )
         row += 1
