@@ -27,6 +27,8 @@ MODULES = [
     "writers",
     "report",
     "cli",
+    # gui last: cli refers to run_gui lazily, resolved at call time.
+    "gui",
 ]
 
 RELATIVE_IMPORT = re.compile(
@@ -60,7 +62,7 @@ from array import array
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Dict, Iterator, List, NamedTuple, Optional, TextIO, Tuple
+from typing import Callable, Dict, Iterator, List, NamedTuple, Optional, TextIO, Tuple
 '''
 
 FOOTER = '''
@@ -82,6 +84,17 @@ def strip_module_source(text: str) -> str:
         return f"{indent}pass" if indent else ""
 
     text = RELATIVE_IMPORT.sub(replace, text)
+
+    # A module's own `if __name__ == "__main__":` block must not survive: in the
+    # flattened file it would fire partway through, before later sections have
+    # been defined. Only the generated footer gets to be the entry point.
+    text = re.sub(
+        r"^if[ \t]+__name__[ \t]*==[ \t]*['\"]__main__['\"][ \t]*:[ \t]*\n"
+        r"(?:(?:[ \t]+[^\n]*)?\n)*",
+        "",
+        text,
+        flags=re.MULTILINE,
+    )
 
     # Absolute stdlib imports are hoisted into the header instead.
     text = re.sub(

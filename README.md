@@ -34,10 +34,33 @@ Backtest on that and the equity curve is fiction.
 when you ask — writes a repaired copy ready for StrategyQuant X.
 
 ```bash
+mt5clean                               # open the window and pick a file
 mt5clean info   EURUSD_M1.csv          # what format is this file?
 mt5clean audit  EURUSD_M1.csv          # what is wrong with it?  (writes nothing)
 mt5clean clean  EURUSD_M1.csv -o EURUSD_sqx.csv --dedupe last --fix-ohlc
 ```
+
+## The window
+
+Run `mt5clean` with no arguments (or double-click the single-file build) and you
+get a file picker instead of a command line:
+
+- **Browse** to any MT5 export; the detected format appears under the path, so
+  you can catch a misread delimiter or date order before running anything.
+- **Audit** runs on a worker thread — a decade of M1 takes a while, and the
+  window stays responsive with a progress bar rather than appearing hung.
+- Findings land in tiles across the top (bars, coverage, errors, warnings,
+  gaps) with the full text report underneath, errors in red and warnings amber.
+- **Repair...** opens the fix list with the boxes **already ticked to match
+  what this file actually needs**, each annotated with how many instances were
+  found. Untick anything you would rather leave alone.
+- **Save report** and **Export gaps CSV** write the same artefacts as the CLI's
+  `--json-out` and `--gaps-csv`.
+
+The repair dialog refuses to overwrite your original export. It is built on
+tkinter, which ships with the python.org installer on Windows and macOS; on
+Debian/Ubuntu it needs `sudo apt install python3-tk`. Without Tk the CLI is
+unaffected.
 
 ## The default is to report, not to rewrite
 
@@ -214,10 +237,13 @@ no install and nothing to keep in a folder together:
 ```bash
 python tools/build_standalone.py -o mt5clean.py
 python mt5clean.py audit XAUUSD_M1.csv
+python mt5clean.py                        # or just double-click it: opens the GUI
 ```
 
-That flattens the package into one stdlib-only script. A test asserts the build
-produces identical reports to the package, so the two can't quietly diverge.
+That flattens the package into one stdlib-only script, GUI included. Tests
+assert the build produces identical reports to the package, that it keeps
+exactly one entry point, and that every subcommand survives the flatten — so
+the two can't quietly diverge.
 
 ## Tests
 

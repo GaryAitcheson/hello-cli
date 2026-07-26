@@ -470,6 +470,33 @@ def test_standalone_build_matches_the_package(tmp_path, dirty_file):
     left.pop("file"), right.pop("file")
     assert left == right
 
+    source = built.read_text(encoding="utf-8")
+    # Exactly one entry point. A module's own __main__ guard surviving the
+    # flatten would fire partway through the file, before later sections exist.
+    assert source.count('if __name__ == "__main__":') == 1
+    # Every subcommand's implementation has to survive the flatten, including
+    # the ones cli.py only imports lazily.
+    for name in ("def run_gui", "def cmd_gui", "def cmd_audit", "def cmd_clean", "class App"):
+        assert name in source, f"standalone build is missing {name}"
+
+
+def test_standalone_exposes_every_subcommand(tmp_path):
+    """Each subcommand must be reachable, not just importable."""
+    import subprocess
+
+    repo = Path(__file__).resolve().parent.parent
+    built = tmp_path / "mt5clean_standalone.py"
+    subprocess.run(
+        [sys.executable, str(repo / "tools" / "build_standalone.py"), "-o", str(built)],
+        check=True, capture_output=True,
+    )
+    for command in ("gui", "info", "audit", "clean"):
+        done = subprocess.run(
+            [sys.executable, str(built), command, "--help"],
+            capture_output=True, text=True,
+        )
+        assert done.returncode == 0, f"{command} --help failed:\n{done.stderr}"
+
 
 def test_cli_tz_shift_parsing(tmp_path, dirty_file):
     out = tmp_path / "shifted.csv"

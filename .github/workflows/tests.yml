@@ -44,6 +44,43 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+  gui:
+    name: GUI tests (xvfb)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Tk and a virtual display
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Confirm Tk is present
+        # The GUI tests skip themselves without a display, and a silently
+        # skipped suite is worse than no suite. Fail loudly instead.
+        run: |
+          python -c "import tkinter; print('tkinter', tkinter.TkVersion)"
+
+      - name: Run GUI tests
+        run: xvfb-run -a pytest tests/test_gui.py -q
+
+      - name: Fail if the GUI tests skipped
+        run: |
+          xvfb-run -a pytest tests/test_gui.py -q --no-header -rs > gui.log 2>&1 || true
+          if grep -q "skipped" gui.log; then
+            echo "::error::GUI tests skipped - Tk or display missing in CI"
+            cat gui.log
+            exit 1
+          fi
+
   smoke:
     name: CLI smoke test
     runs-on: ubuntu-latest

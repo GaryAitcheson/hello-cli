@@ -140,21 +140,13 @@ def _verdict(result: AuditResult) -> str:
     else:
         lines.append("VERDICT: clean.")
 
-    suggestions = []
-    if result.counts.get("duplicate_conflicting") or result.counts.get("duplicate_identical"):
-        suggestions.append("--dedupe last")
-    if result.counts.get("out_of_order"):
-        suggestions.append("--sort")
-    if result.counts.get("ohlc_invalid"):
-        suggestions.append("--fix-ohlc")
-    if result.counts.get("off_grid"):
-        suggestions.append("--off-grid snap")
-    if result.counts.get("gap_intraday"):
-        suggestions.append("--fill-gaps")
-    if result.counts.get("price_spike"):
-        suggestions.append("--drop-spikes")
-    if suggestions:
-        lines.append("Suggested repair: mt5clean clean " + " ".join(suggestions) + " <file> -o <out.csv>")
+    from .fixes import options_to_flags, suggest_options
+
+    flags = options_to_flags(suggest_options(result))
+    if flags:
+        lines.append(
+            "Suggested repair: mt5clean clean " + " ".join(flags) + " <file> -o <out.csv>"
+        )
     return "\n".join(lines) + "\n"
 
 

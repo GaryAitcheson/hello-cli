@@ -89,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="example rows to print per finding (default: 5)",
     )
 
+    p_gui = sub.add_parser("gui", help="open the window (also what a bare `mt5clean` does)")
+    p_gui.add_argument("file", nargs="?", help="optionally preload this export")
+
     p_info = sub.add_parser("info", parents=[common], help="show the detected file format only")
     p_info.add_argument("--head", type=int, default=5, metavar="N", help="sample rows to show")
 
@@ -156,6 +159,13 @@ def _thresholds(args) -> Thresholds:
         spike_range_mult=args.spike_mult,
         spike_jump_mult=args.jump_mult,
     )
+
+
+def cmd_gui(args) -> int:
+    # Imported here so the CLI keeps working on a Python built without Tk.
+    from .gui import run_gui
+
+    return run_gui(getattr(args, "file", None))
 
 
 def cmd_info(args) -> int:
@@ -295,9 +305,15 @@ def _glue_negative_values(argv: List[str]) -> List[str]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    raw = list(argv if argv is not None else sys.argv[1:])
+    if not raw:
+        # Double-clicking the file on Windows passes no arguments, and a usage
+        # error in a console that closes instantly helps nobody.
+        raw = ["gui"]
+
     parser = build_parser()
-    args = parser.parse_args(_glue_negative_values(list(argv if argv is not None else sys.argv[1:])))
-    handlers = {"info": cmd_info, "audit": cmd_audit, "clean": cmd_clean}
+    args = parser.parse_args(_glue_negative_values(raw))
+    handlers = {"gui": cmd_gui, "info": cmd_info, "audit": cmd_audit, "clean": cmd_clean}
     try:
         return handlers[args.command](args)
     except SniffError as exc:

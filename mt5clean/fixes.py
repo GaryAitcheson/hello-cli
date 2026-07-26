@@ -233,6 +233,55 @@ def _fill(
         )
 
 
+def suggest_options(result) -> CleanOptions:
+    """Pick the repairs an audit's findings actually call for.
+
+    Shared by the CLI's "suggested repair" line and the GUI's pre-ticked
+    checkboxes, so the two can never recommend different things.
+    """
+    counts = result.counts
+    options = CleanOptions()
+    if counts.get("duplicate_conflicting") or counts.get("duplicate_identical"):
+        options.duplicates = "last"
+    if counts.get("out_of_order"):
+        options.sort = True
+    if counts.get("ohlc_invalid"):
+        options.fix_ohlc = True
+    if counts.get("off_grid"):
+        options.off_grid = "snap"
+    if counts.get("gap_intraday"):
+        options.fill_gaps = True
+    if counts.get("price_spike"):
+        options.drop_spikes = True
+    return options
+
+
+def options_to_flags(options: CleanOptions) -> List[str]:
+    """Render options as the CLI flags that would reproduce them."""
+    flags: List[str] = []
+    if options.duplicates != "none":
+        flags += ["--dedupe", options.duplicates]
+    if options.sort:
+        flags.append("--sort")
+    if options.drop_invalid:
+        flags.append("--drop-invalid")
+    elif options.fix_ohlc:
+        flags.append("--fix-ohlc")
+    if options.off_grid != "keep":
+        flags += ["--off-grid", options.off_grid]
+    if options.fill_gaps:
+        flags.append("--fill-gaps")
+        if options.max_fill != 60:
+            flags += ["--max-fill", str(options.max_fill)]
+    if options.drop_spikes:
+        flags.append("--drop-spikes")
+    if options.session_only:
+        flags.append("--session-only")
+    if options.tz_shift:
+        flags += ["--tz-shift", str(options.tz_shift)]
+    return flags
+
+
 def describe_plan(options: CleanOptions) -> List[str]:
     """Human-readable list of what the current options will actually do."""
     plan = []
