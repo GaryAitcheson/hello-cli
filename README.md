@@ -1,5 +1,7 @@
 # hello-cli
 
+[![tests](https://github.com/GaryAitcheson/hello-cli/actions/workflows/tests.yml/badge.svg)](https://github.com/GaryAitcheson/hello-cli/actions/workflows/tests.yml)
+
 A simple command-line greeter written in Python, plus **mt5clean** — a data
 cleaner for MetaTrader 5 M1 bar exports.
 
@@ -199,7 +201,7 @@ RAM. Only `--sort` needs the file in memory.
 
 ## Sample data
 
-`samples/EURUSD_M1_dirty.csv` is a synthetic 12-week M1 export with a known set
+`samples/EURUSD_M1_dirty.csv` is a synthetic 4-week M1 export with a known set
 of defects baked in — a 3-hour hole, a missing day, duplicates, a broken bar, a
 spike, an off-grid stamp and an out-of-order pair. Regenerate it with
 `python tests/make_sample.py <path>`.
@@ -210,6 +212,11 @@ spike, an off-grid stamp and an out-of-order pair. Regenerate it with
 pip install -e ".[dev]"
 pytest
 ```
+
+CI runs the suite on Python 3.9 through 3.13 on Linux, plus one Windows job
+(MT5 lives on Windows, and the reader does its own encoding and newline
+handling), and a smoke test that audits the sample file and checks the repairs
+clear every error-level finding.
 
 ## Licence
 

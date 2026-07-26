@@ -1,0 +1,105 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        include:
+          # MT5 runs on Windows, and mt5clean does its own encoding, newline
+          # and delimiter handling, so one Windows job guards the paths where
+          # those actually differ.
+          - os: windows-latest
+            python-version: "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q
+
+  smoke:
+    name: CLI smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Format detection
+        run: mt5clean info samples/EURUSD_M1_dirty.csv
+
+      - name: Audit finds the planted defects
+        run: |
+          mt5clean audit samples/EURUSD_M1_dirty.csv \
+            --examples 0 --json-out audit.json --gaps-csv gaps.csv
+          python - <<'PY'
+          import json, sys
+
+          report = json.load(open("audit.json"))
+          counts = report["counts"]
+          expected = {
+              "duplicate_identical": 1,
+              "duplicate_conflicting": 1,
+              "ohlc_invalid": 1,
+              "out_of_order": 1,
+              "off_grid": 1,
+              "negative_spread": 1,
+              "price_spike": 1,
+              "zero_volume": 12,
+              "gap_intraday": 1,
+              "gap_holiday": 1,
+          }
+          bad = {k: (v, counts.get(k)) for k, v in expected.items() if counts.get(k) != v}
+          if bad:
+              sys.exit(f"audit missed planted defects (want, got): {bad}")
+          if not report["session"]["inferred"]:
+              sys.exit("session should have been inferred from 4 weeks of data")
+          print(f"audit OK - {report['coverage']['percent']}% session coverage")
+          PY
+
+      - name: Dirty file exits non-zero under --fail-on error
+        run: |
+          if mt5clean audit samples/EURUSD_M1_dirty.csv \
+               --examples 0 --fail-on error > /dev/null; then
+            echo "::error::expected exit 1 on a file with error-level findings"
+            exit 1
+          fi
+
+      - name: Repairs clear every error, and the output re-parses
+        run: |
+          mt5clean clean samples/EURUSD_M1_dirty.csv -o cleaned.csv \
+            --examples 0 --dedupe last --sort --fix-ohlc --off-grid snap --drop-spikes
+          mt5clean audit cleaned.csv --examples 0 --fail-on error
