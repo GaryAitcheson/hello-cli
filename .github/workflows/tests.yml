@@ -140,3 +140,74 @@ jobs:
           mt5clean clean samples/EURUSD_M1_dirty.csv -o cleaned.csv \
             --examples 0 --dedupe last --sort --fix-ohlc --off-grid snap --drop-spikes
           mt5clean audit cleaned.csv --examples 0 --fail-on error
+
+  windows-exe:
+    name: Windows .exe (PyInstaller)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Confirm Tk is present before building
+        # The windowed build is useless without tkinter, and PyInstaller only
+        # warns about a hidden import it cannot find. Fail here instead of
+        # shipping a GUI .exe that dies on launch.
+        run: python -c "import tkinter; print('tkinter', tkinter.TkVersion)"
+
+      - name: Build
+        run: pyinstaller tools/mt5clean.spec --noconfirm
+
+      - name: Both executables exist
+        shell: pwsh
+        run: |
+          foreach ($exe in "dist/mt5clean.exe", "dist/mt5clean-gui.exe") {
+            if (-not (Test-Path $exe)) { throw "$exe was not produced" }
+            "{0}  {1:N1} MB" -f $exe, ((Get-Item $exe).Length / 1MB)
+          }
+
+      - name: The .exe runs and detects the format
+        run: |
+          dist\mt5clean.exe --help
+          dist\mt5clean.exe info samples\EURUSD_M1_dirty.csv
+
+      - name: The .exe finds the planted defects
+        shell: pwsh
+        run: |
+          dist\mt5clean.exe audit samples\EURUSD_M1_dirty.csv --examples 0 --json-out audit.json
+          $report = Get-Content audit.json | ConvertFrom-Json
+          if ($report.timeframe -ne "M1") { throw "expected M1, got $($report.timeframe)" }
+          if ($report.counts.ohlc_invalid -ne 1) { throw "planted OHLC defect not found" }
+          "audit OK - $($report.coverage.percent)% coverage"
+
+      - name: A dirty file still exits non-zero
+        shell: pwsh
+        run: |
+          dist\mt5clean.exe audit samples\EURUSD_M1_dirty.csv --examples 0 --fail-on error
+          $code = $LASTEXITCODE
+          if ($code -eq 0) { throw "expected a non-zero exit on error-level findings" }
+          "exited $code as expected"
+          # Reset, or the pwsh wrapper propagates the deliberate failure.
+          exit 0
+
+      - name: The .exe repairs a file, and the result re-audits clean
+        run: |
+          dist\mt5clean.exe clean samples\EURUSD_M1_dirty.csv -o cleaned.csv --examples 0 --dedupe last --sort --fix-ohlc --off-grid snap --drop-spikes
+          dist\mt5clean.exe audit cleaned.csv --examples 0 --fail-on error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mt5clean-windows-exe
+          path: |
+            dist/mt5clean.exe
+            dist/mt5clean-gui.exe
+          if-no-files-found: error

@@ -7,3 +7,6 @@ dist/
 .venv/
 venv/
 uv.lock
+
+# PyInstaller
+*.manifest

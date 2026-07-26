@@ -296,6 +296,44 @@ assert the build produces identical reports to the package, that it keeps
 exactly one entry point, and that every subcommand survives the flatten — so
 the two can't quietly diverge.
 
+It still needs a Python on the machine. For a box with no Python at all, build
+the `.exe` instead.
+
+## Windows .exe
+
+CI builds two Windows executables on every run. Grab them without building
+anything yourself: open the latest run under
+[Actions](https://github.com/GaryAitcheson/hello-cli/actions/workflows/tests.yml),
+and download the **`mt5clean-windows-exe`** artifact.
+
+| File | Use |
+| --- | --- |
+| `mt5clean-gui.exe` | **Double-click this one.** Opens the file picker, no console window. |
+| `mt5clean.exe` | The command line — `mt5clean.exe audit EURUSD_M1.csv` |
+
+Two binaries because on Windows the choice is mutually exclusive: a console
+build flashes a terminal when you double-click it, and a windowed build has
+nowhere to print a report to. Both are self-contained — no Python, no
+tkinter, no install, roughly 10 MB each.
+
+To build them yourself on a Windows machine:
+
+```bash
+pip install pyinstaller
+pyinstaller tools/mt5clean.spec --noconfirm
+# -> dist/mt5clean.exe and dist/mt5clean-gui.exe
+```
+
+The spec must be built **on Windows** — PyInstaller bundles a native
+bootloader, so it cannot cross-compile a `.exe` from Linux or macOS. Running
+it on Linux gives working Linux binaries of the same two programs.
+
+The CI job checks Tk is present *before* building (PyInstaller only warns
+about a hidden import it cannot resolve, and a GUI `.exe` without tkinter
+would die on launch), then runs the built `.exe` against the sample export:
+format detection, the planted-defect counts, the non-zero exit on a dirty
+file, and a repair that re-audits clean.
+
 ## Tests
 
 ```bash

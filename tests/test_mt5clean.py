@@ -811,3 +811,59 @@ def test_cli_clean_refuses_tick_files(tmp_path):
     code = main(["clean", path, "-o", str(tmp_path / "out.csv")])
     assert code == EXIT_ERROR
     assert not (tmp_path / "out.csv").exists()
+
+
+# --------------------------------------------------------------------------
+# frozen-build entry points
+#
+# The .exe is only built on Windows CI, so nothing here can run PyInstaller.
+# What these do catch is the cheap way to break that build from Linux: moving
+# or renaming something the spec reaches for.
+# --------------------------------------------------------------------------
+
+TOOLS = Path(__file__).resolve().parent.parent / "tools"
+
+
+def test_entry_points_exist_and_import():
+    sys.path.insert(0, str(TOOLS))
+    try:
+        import entry_console
+        import entry_gui
+    finally:
+        sys.path.remove(str(TOOLS))
+    assert callable(entry_console.main)
+    assert callable(entry_gui.main)
+
+
+def test_spec_references_files_that_exist():
+    spec = (TOOLS / "mt5clean.spec").read_text()
+    for entry in ("entry_console.py", "entry_gui.py"):
+        assert entry in spec, f"{entry} is not referenced by the spec"
+        assert (TOOLS / entry).exists()
+
+
+def test_spec_hides_the_lazy_gui_import():
+    """cli.py imports the GUI inside a function, so PyInstaller cannot see it.
+
+    Without it in hiddenimports the console .exe raises ModuleNotFoundError
+    the moment anyone runs it with no arguments.
+    """
+    spec = (TOOLS / "mt5clean.spec").read_text()
+    assert "mt5clean.gui" in spec
+    assert "tkinter" in spec
+
+
+def test_cli_gui_import_really_is_lazy():
+    """Guards the assumption above: if this import moves to module scope the
+    hiddenimports entry becomes unnecessary, and if it stays lazy it stays
+    required. Either way the spec and the code must agree."""
+    source = (Path(__file__).resolve().parent.parent / "mt5clean" / "cli.py").read_text()
+    assert "    from .gui import run_gui" in source
+
+
+def test_gui_module_imports_without_tkinter():
+    """The GUI module must import even where Tk is missing, or the console
+    build's hidden import would crash the CLI on machines without Tk."""
+    import mt5clean.gui as gui
+
+    assert hasattr(gui, "run_gui")
