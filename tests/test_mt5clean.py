@@ -438,6 +438,36 @@ def test_cli_missing_file_is_an_error():
     assert main(["audit", "/nonexistent/nope.csv"]) == 2
 
 
+def test_standalone_build_matches_the_package(tmp_path, dirty_file):
+    """The single-file build is what gets handed to a Windows box next to MT5.
+
+    It is generated, so it can drift from the package without anyone noticing;
+    this pins it by comparing full JSON reports from both.
+    """
+    import json
+    import subprocess
+
+    repo = Path(__file__).resolve().parent.parent
+    built = tmp_path / "mt5clean_standalone.py"
+    subprocess.run(
+        [sys.executable, str(repo / "tools" / "build_standalone.py"), "-o", str(built)],
+        check=True, capture_output=True,
+    )
+
+    args = ["audit", dirty_file, "--json", "--examples", "0"]
+    standalone = subprocess.run(
+        [sys.executable, str(built)] + args, check=True, capture_output=True, text=True,
+    )
+    package = subprocess.run(
+        [sys.executable, "-m", "mt5clean"] + args,
+        check=True, capture_output=True, text=True, cwd=str(repo),
+    )
+
+    left, right = json.loads(standalone.stdout), json.loads(package.stdout)
+    left.pop("file"), right.pop("file")
+    assert left == right
+
+
 def test_cli_tz_shift_parsing(tmp_path, dirty_file):
     out = tmp_path / "shifted.csv"
     assert main(["clean", dirty_file, "-o", str(out), "--tz-shift", "-3h", "--examples", "0"]) == 0

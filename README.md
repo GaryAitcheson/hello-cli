@@ -206,6 +206,19 @@ of defects baked in — a 3-hour hole, a missing day, duplicates, a broken bar, 
 spike, an off-grid stamp and an out-of-order pair. Regenerate it with
 `python tests/make_sample.py <path>`.
 
+## Single-file build
+
+For a machine that just needs to run the tool — a Windows box next to MT5, with
+no install and nothing to keep in a folder together:
+
+```bash
+python tools/build_standalone.py -o mt5clean.py
+python mt5clean.py audit XAUUSD_M1.csv
+```
+
+That flattens the package into one stdlib-only script. A test asserts the build
+produces identical reports to the package, so the two can't quietly diverge.
+
 ## Tests
 
 ```bash
