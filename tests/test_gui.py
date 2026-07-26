@@ -26,9 +26,32 @@ from mt5clean.gui import TK_AVAILABLE  # noqa: E402
 
 from make_sample import generate, inject, write  # noqa: E402
 
+def _tk_usable() -> bool:
+    """Whether Tk can actually start, not merely whether the module imports.
+
+    These are different things, and the difference is not academic: the hosted
+    Windows Python images have shipped a tkinter that imports cleanly while its
+    Tcl library files are missing, so `Tk()` dies with "Can't find a usable
+    tk.tcl". Guarding on the import alone turns that into two errors in a
+    fixture rather than an honest skip.
+    """
+    if not TK_AVAILABLE:
+        return False
+    if not (os.environ.get("DISPLAY") or sys.platform in ("win32", "darwin")):
+        return False
+    try:
+        import tkinter as tk
+
+        root = tk.Tk()
+        root.destroy()
+    except Exception:
+        return False
+    return True
+
+
 pytestmark = pytest.mark.skipif(
-    not TK_AVAILABLE or not (os.environ.get("DISPLAY") or sys.platform in ("win32", "darwin")),
-    reason="needs tkinter and a display",
+    not _tk_usable(),
+    reason="needs tkinter and a working Tcl/Tk install with a display",
 )
 
 PUMP_TIMEOUT = 120

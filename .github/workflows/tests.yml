@@ -158,11 +158,14 @@ jobs:
           pip install -e .
           pip install pyinstaller
 
-      - name: Confirm Tk is present before building
-        # The windowed build is useless without tkinter, and PyInstaller only
-        # warns about a hidden import it cannot find. Fail here instead of
-        # shipping a GUI .exe that dies on launch.
-        run: python -c "import tkinter; print('tkinter', tkinter.TkVersion)"
+      - name: Confirm Tk actually starts before building
+        # Importing tkinter is not enough to prove anything. The hosted Windows
+        # Python images have shipped a tkinter that imports fine while its Tcl
+        # library files are missing, and PyInstaller collects those same files
+        # into the bundle - so a build from such an install produces a GUI .exe
+        # that dies on launch. Start a real Tk root, which is what fails.
+        run: |
+          python -c "import tkinter; r = tkinter.Tk(); print('Tcl/Tk', r.tk.call('info', 'patchlevel')); r.destroy()"
 
       - name: Build
         run: pyinstaller tools/mt5clean.spec --noconfirm
