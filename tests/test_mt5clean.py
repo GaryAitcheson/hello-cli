@@ -447,21 +447,24 @@ def test_standalone_build_matches_the_package(tmp_path, dirty_file):
     import json
     import subprocess
 
+    def run(command, **kwargs):
+        # Not check=True: that raises CalledProcessError with the child's
+        # stderr hidden in an attribute, which turns a one-line build failure
+        # into an unreadable CI log.
+        done = subprocess.run(command, capture_output=True, text=True, **kwargs)
+        assert done.returncode == 0, (
+            f"{' '.join(str(c) for c in command[1:])} exited {done.returncode}\n"
+            f"{done.stderr.strip()}"
+        )
+        return done
+
     repo = Path(__file__).resolve().parent.parent
     built = tmp_path / "mt5clean_standalone.py"
-    subprocess.run(
-        [sys.executable, str(repo / "tools" / "build_standalone.py"), "-o", str(built)],
-        check=True, capture_output=True,
-    )
+    run([sys.executable, str(repo / "tools" / "build_standalone.py"), "-o", str(built)])
 
     args = ["audit", dirty_file, "--json", "--examples", "0"]
-    standalone = subprocess.run(
-        [sys.executable, str(built)] + args, check=True, capture_output=True, text=True,
-    )
-    package = subprocess.run(
-        [sys.executable, "-m", "mt5clean"] + args,
-        check=True, capture_output=True, text=True, cwd=str(repo),
-    )
+    standalone = run([sys.executable, str(built)] + args)
+    package = run([sys.executable, "-m", "mt5clean"] + args, cwd=str(repo))
 
     left, right = json.loads(standalone.stdout), json.loads(package.stdout)
     left.pop("file"), right.pop("file")

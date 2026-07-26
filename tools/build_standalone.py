@@ -124,7 +124,10 @@ def main() -> int:
     version = version_match.group(1) if version_match else "0.0.0"
 
     text = build(package, version)
-    Path(args.output).write_text(text, encoding="utf-8", newline="\n")
+    # Not Path.write_text(newline=...): that keyword is 3.10+, and this script
+    # has to run on the same interpreters the package supports.
+    with open(args.output, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
     lines = text.count("\n") + 1
     print(f"wrote {args.output}  ({lines:,} lines, {len(text) / 1024:,.0f} KiB)")
     return 0
