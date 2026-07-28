@@ -131,7 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_clean.add_argument("--fill-gaps", action="store_true",
                          help="insert flat zero-volume bars across short in-session gaps")
     p_clean.add_argument("--max-fill", type=int, default=60, metavar="N",
-                         help="longest gap, in minutes, that --fill-gaps will invent (default: 60)")
+                         help="longest gap, in bars, that --fill-gaps will invent (default: 60)")
+    p_clean.add_argument("--min-fill", type=int, default=1, metavar="N",
+                         help="shortest gap, in bars, worth filling; below this a hole is "
+                              "a bar nobody traded rather than lost data (default: 1)")
     p_clean.add_argument("--drop-spikes", action="store_true",
                          help="drop bars flagged by --spike-mult")
     p_clean.add_argument("--session-only", action="store_true",
@@ -283,6 +286,7 @@ def cmd_clean(args) -> int:
         off_grid=args.off_grid,
         fill_gaps=args.fill_gaps,
         max_fill=args.max_fill,
+        min_fill=args.min_fill,
         drop_spikes=args.drop_spikes,
         spike_limit=result.median_range * args.spike_mult,
         session_only=args.session_only,

@@ -308,6 +308,27 @@ def test_fill_gaps_respects_max_fill(dirty_file):
     assert large.unfilled_runs >= 1  # the full-day hole is still left alone
 
 
+def test_fill_gaps_respects_min_fill(dirty_file):
+    """A one-bar hole is a bar nobody traded; --min-fill leaves it alone."""
+    _bars, all_runs = _run_clean(dirty_file, CleanOptions(fill_gaps=True, max_fill=200))
+    _bars, long_only = _run_clean(
+        dirty_file, CleanOptions(fill_gaps=True, max_fill=200, min_fill=5))
+    assert long_only.filled_bars < all_runs.filled_bars
+    assert long_only.filled_runs < all_runs.filled_runs
+    assert long_only.unfilled_short_runs >= 1
+    # every run it did fill was at least min_fill bars long
+    assert long_only.filled_bars >= 5 * long_only.filled_runs
+
+
+def test_min_fill_defaults_to_filling_everything(dirty_file):
+    """Default min_fill=1 must not change existing behaviour."""
+    _bars, default = _run_clean(dirty_file, CleanOptions(fill_gaps=True, max_fill=200))
+    _bars, explicit = _run_clean(
+        dirty_file, CleanOptions(fill_gaps=True, max_fill=200, min_fill=1))
+    assert default.filled_bars == explicit.filled_bars
+    assert default.unfilled_short_runs == 0
+
+
 def test_filled_bars_are_flat_and_zero_volume(dirty_file):
     bars, _ = _run_clean(dirty_file, CleanOptions(fill_gaps=True, max_fill=200))
     synthetic = [b for b in bars if b.line_no == -1]

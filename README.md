@@ -188,7 +188,8 @@ Mon–Fri approximation bars use.
 | `--drop-invalid` | drop broken bars instead of repairing them |
 | `--off-grid snap\|drop` | handle stamps that aren't on a whole minute |
 | `--fill-gaps` | insert flat zero-volume bars across short in-session holes |
-| `--max-fill N` | longest gap `--fill-gaps` will invent (default 60 min) |
+| `--max-fill N` | longest gap `--fill-gaps` will invent, in bars (default 60) |
+| `--min-fill N` | shortest gap worth filling, in bars; below this a hole is a bar nobody traded (default 1) |
 | `--drop-spikes` | remove bars past the spike threshold |
 | `--session-only` | drop bars outside the detected session |
 | `--tz-shift -3h` | re-base broker time to another offset |
@@ -199,6 +200,12 @@ detected session, only for runs no longer than `--max-fill`, and the bars it
 writes are flat with zero volume so they're obvious later. A missing holiday or
 a multi-hour outage is left as a hole, because inventing a day of prices is
 worse than having none.
+
+`--min-fill` guards the other end. MT5 writes no bar when no tick arrives, so a
+one- or two-bar hole is usually a bar nobody traded rather than lost history,
+and bridging it invents data the broker never had. Set `--min-fill 15` and only
+runs long enough to look like a real dropout are filled; the short ones are
+counted as `gap runs left alone (too short)` and left as they are.
 
 Use `--dry-run` to see the plan without writing, and `--verify` to re-audit the
 output and confirm the repairs landed.

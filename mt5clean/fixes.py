@@ -26,7 +26,9 @@ class CleanOptions:
     drop_invalid: bool = False
     off_grid: str = "keep"            # keep | snap | drop
     fill_gaps: bool = False
-    max_fill: int = 60                # longest run of minutes we will invent
+    max_fill: int = 60                # longest run of bars we will invent
+    min_fill: int = 1                 # shortest run worth filling; below this a
+                                      # hole is a bar nobody traded, not lost data
     drop_spikes: bool = False
     spike_limit: float = 0.0          # absolute range limit, set from the audit
     session_only: bool = False
@@ -68,6 +70,7 @@ class CleanStats:
     filled_bars: int = 0
     filled_runs: int = 0
     unfilled_runs: int = 0
+    unfilled_short_runs: int = 0
     notes: List[str] = field(default_factory=list)
 
     def summary(self) -> List[str]:
@@ -85,6 +88,7 @@ class CleanStats:
             ("synthetic bars inserted", self.filled_bars),
             ("gap runs filled", self.filled_runs),
             ("gap runs left alone (too long)", self.unfilled_runs),
+            ("gap runs left alone (too short)", self.unfilled_short_runs),
         ]
         always = {"bars read", "bars written"}
         return [
@@ -213,6 +217,9 @@ def _fill(
     if len(candidates) > options.max_fill:
         stats.unfilled_runs += 1
         return
+    if len(candidates) < options.min_fill:
+        stats.unfilled_short_runs += 1
+        return
 
     stats.filled_runs += 1
     price = prev.close
@@ -273,6 +280,8 @@ def options_to_flags(options: CleanOptions) -> List[str]:
         flags.append("--fill-gaps")
         if options.max_fill != 60:
             flags += ["--max-fill", str(options.max_fill)]
+        if options.min_fill != 1:
+            flags += ["--min-fill", str(options.min_fill)]
     if options.drop_spikes:
         flags.append("--drop-spikes")
     if options.session_only:
@@ -306,8 +315,7 @@ def describe_plan(options: CleanOptions) -> List[str]:
     if options.session_only:
         plan.append("drop bars outside the detected trading session")
     if options.fill_gaps:
-        plan.append(
-            f"fill in-session gaps of up to {options.max_fill} minutes with flat bars "
-            "(volume 0)"
-        )
+        span = (f"of {options.min_fill} to {options.max_fill} bars"
+                if options.min_fill > 1 else f"of up to {options.max_fill} bars")
+        plan.append(f"fill in-session gaps {span} with flat bars (volume 0)")
     return plan or ["no repairs enabled - output will match the input"]
