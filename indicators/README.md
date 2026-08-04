@@ -24,3 +24,7 @@ bars (no custom indicators required).
 This file was hand-authored without access to a live SQX install for
 validation, so verify it imports cleanly in AlgoWizard before relying on
 it — report back any import errors and they'll be fixed.
+
+**Local convention:** copy generated custom block XML files to
+`D:\SQX\Downloaded Indicators\Custom Blocks` before importing into
+AlgoWizard.
