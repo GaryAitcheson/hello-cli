@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Inside Bar custom block pair for StrategyQuant X / AlgoWizard.
+
+  Import via: AlgoWizard -> Custom Blocks -> Import.
+
+  Rule: current bar's range is fully contained within the previous bar's
+  range (High[0] < High[1] AND Low[0] > Low[1]). Uses only raw price bars,
+  no custom indicators, so it needs no install-specific setup.
+
+  NOTE: hand-authored, not run through SQX's own block validator (no local
+  install available in this environment) - verify on first import and
+  report back any import errors so they can be fixed.
+-->
+<Blocks>
+	<CBlock_InsideBar_Long>
+		<key>CBlock_InsideBar_Long</key>
+		<name>InsideBar_Long</name>
+		<category>PriceAction_user</category>
+		<type>Condition</type>
+		<returnType>boolean</returnType>
+		<display><![CDATA[Inside Bar (bullish context)]]></display>
+		<help><![CDATA[True when the current bar's high is below the previous bar's high AND the current bar's low is above the previous bar's low - i.e. the current bar is an Inside Bar, with the previous (mother) bar closing bullish.]]></help>
+		<oppositeBlockKey>CBlock_InsideBar_Short</oppositeBlockKey>
+		<params></params>
+		<contents><![CDATA[
+			(High[0] < High[1]) && (Low[0] > Low[1]) && (Close[1] >= Open[1])
+		]]></contents>
+	</CBlock_InsideBar_Long>
+	<CBlock_InsideBar_Short>
+		<key>CBlock_InsideBar_Short</key>
+		<name>InsideBar_Short</name>
+		<category>PriceAction_user</category>
+		<type>Condition</type>
+		<returnType>boolean</returnType>
+		<display><![CDATA[Inside Bar (bearish context)]]></display>
+		<help><![CDATA[True when the current bar's high is below the previous bar's high AND the current bar's low is above the previous bar's low - i.e. the current bar is an Inside Bar, with the previous (mother) bar closing bearish.]]></help>
+		<oppositeBlockKey>CBlock_InsideBar_Long</oppositeBlockKey>
+		<params></params>
+		<contents><![CDATA[
+			(High[0] < High[1]) && (Low[0] > Low[1]) && (Close[1] < Open[1])
+		]]></contents>
+	</CBlock_InsideBar_Short>
+	<CBlock_InsideBar_Any>
+		<key>CBlock_InsideBar_Any</key>
+		<name>InsideBar_Any</name>
+		<category>PriceAction_user</category>
+		<type>Condition</type>
+		<returnType>boolean</returnType>
+		<display><![CDATA[Inside Bar (any context)]]></display>
+		<help><![CDATA[True when the current bar's high is below the previous bar's high AND the current bar's low is above the previous bar's low - i.e. the current bar's range is fully contained within the previous bar's range, regardless of the previous bar's direction.]]></help>
+		<oppositeBlockKey>CBlock_null</oppositeBlockKey>
+		<params></params>
+		<contents><![CDATA[
+			(High[0] < High[1]) && (Low[0] > Low[1])
+		]]></contents>
+	</CBlock_InsideBar_Any>
+</Blocks>
